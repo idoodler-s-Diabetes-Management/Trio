@@ -12,6 +12,7 @@ extension NocturneConfig {
         @Published var isValidURL: Bool = true
         @Published var connecting = false
         @Published var isConnected: Bool = false
+        @Published var backfilling = false
 
         @Published var useNocturne = false
         @Published var syncHeartRate = true
@@ -85,6 +86,28 @@ extension NocturneConfig {
                     self.nocturneManager.syncNow()
                 }
                 .store(in: &lifetime)
+        }
+
+        func backfillHealthData() async {
+            await MainActor.run {
+                backfilling = true
+                message = ""
+            }
+
+            do {
+                try await nocturneManager.backfillHealthData()
+                await MainActor.run {
+                    self.message = "Backfill complete!"
+                }
+            } catch {
+                await MainActor.run {
+                    self.message = "Error: \(error.localizedDescription)"
+                }
+            }
+
+            await MainActor.run {
+                self.backfilling = false
+            }
         }
 
         func disconnect() {

@@ -6,6 +6,9 @@ extension NocturneConfig {
         let resolver: Resolver
         @StateObject var state = StateModel()
 
+        @State var backfillAlert: Alert?
+        @State var isBackfillAlertPresented = false
+
         @Environment(\.colorScheme) var colorScheme
         @Environment(AppState.self) var appState
 
@@ -79,6 +82,49 @@ extension NocturneConfig {
                     }
                 }.listRowBackground(Color.chart)
 
+                if state.useNocturne, state.isConnected {
+                    Section(
+                        content: {
+                            VStack {
+                                Button {
+                                    Task {
+                                        await state.backfillHealthData()
+                                        if state.message.hasPrefix("Error:") {
+                                            DispatchQueue.main.async {
+                                                backfillAlert = Alert(
+                                                    title: Text("Backfill Failed"),
+                                                    message: Text(state.message),
+                                                    dismissButton: .default(Text("OK"))
+                                                )
+                                                isBackfillAlertPresented = true
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    Text("Backfill Health Data")
+                                        .font(.title3)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .buttonStyle(.bordered)
+                                .disabled(state.connecting || state.backfilling)
+
+                                HStack(alignment: .center) {
+                                    Text(
+                                        "Upload the last 24 hours of enabled metrics from Apple Health to Nocturne."
+                                    )
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(nil)
+                                    Spacer()
+                                    if state.backfilling {
+                                        ProgressView()
+                                    }
+                                }.padding(.top)
+                            }.padding(.vertical)
+                        }
+                    ).listRowBackground(Color.chart)
+                }
+
                 if state.useNocturne, state.needsHealthKitPermission {
                     Section {
                         VStack {
@@ -102,6 +148,9 @@ extension NocturneConfig {
                 }
             }
             .listSectionSpacing(sectionSpacing)
+            .alert(isPresented: $isBackfillAlertPresented) {
+                backfillAlert ?? Alert(title: Text("Unknown Error"))
+            }
             .navigationBarTitle("Nocturne")
             .navigationBarTitleDisplayMode(.automatic)
             .scrollContentBackground(.hidden).background(appState.trioBackgroundColor(for: colorScheme))

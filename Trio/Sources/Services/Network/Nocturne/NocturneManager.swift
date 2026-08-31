@@ -21,6 +21,21 @@ protocol NocturneManager: AnyObject {
     /// Requests an immediate sync of every enabled metric. Safe to call from anywhere; actual
     /// uploads are throttled and run on a background queue.
     func syncNow()
+    /// Uploads the last 24 hours of every enabled metric from Apple Health to Nocturne, bypassing
+    /// the incremental sync anchors — mirrors Nightscout's "Backfill Glucose". Useful right after
+    /// connecting, so Nocturne isn't limited to data recorded from that point forward.
+    func backfillHealthData() async throws
+}
+
+enum NocturneManagerError: LocalizedError {
+    case notConfigured
+
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured:
+            return String(localized: "Nocturne is not connected or Health Sync is disabled")
+        }
+    }
 }
 
 /// Reads Steps, Heart Rate, and Sleep Analysis from Apple Health and uploads them to a
@@ -58,6 +73,9 @@ final class BaseNocturneManager: NocturneManager, Injectable {
 
     /// Coalesces bursts of HealthKit observer callbacks into a single sync per metric.
     private let syncThrottle: TimeInterval = 30
+
+    /// How far back ``backfillHealthData()`` looks, matching Nightscout's fixed 24-hour backfill.
+    private let backfillWindow: TimeInterval = 24 * 60 * 60
 
     private let processQueue = DispatchQueue(label: "BaseNocturneManager.processQueue", qos: .utility)
 
@@ -202,25 +220,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         do {
             let (samples, newAnchor): ([HKQuantitySample], HKQueryAnchor?) =
                 try await fetchNewSamples(type: AppleHealth.heartRateType)
-            guard samples.isNotEmpty else { return }
-
-            let bpmUnit = HKUnit.count().unitDivided(by: .minute())
-            let uploads = samples.map { sample in
-                NocturneHeartRateUpload(
-                    timestamp: sample.startDate,
-                    utcOffset: utcOffsetMinutes(at: sample.startDate),
-                    bpm: Int(sample.quantity.doubleValue(for: bpmUnit).rounded()),
-                    accuracy: 0,
-                    device: sample.device?.name,
-                    app: sample.sourceRevision.source.name,
-                    dataSource: "AppleHealth",
-                    syncIdentifier: sample.uuid.uuidString
-                )
-            }
-
-            for batch in uploads.chunked(into: maxRecordsPerUpload) {
-                try await api.uploadHeartRates(batch)
-            }
+            try await uploadHeartRateSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.heartRateType)
         } catch {
             warning(.nocturne, "Failed to sync heart rate to Nocturne", error: error)
@@ -231,25 +231,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         do {
             let (samples, newAnchor): ([HKQuantitySample], HKQueryAnchor?) =
                 try await fetchNewSamples(type: AppleHealth.stepCountType)
-            guard samples.isNotEmpty else { return }
-
-            let uploads = samples.map { sample in
-                NocturneStepCountUpload(
-                    timestamp: sample.startDate,
-                    utcOffset: utcOffsetMinutes(at: sample.startDate),
-                    // A HealthKit step-count sample is a delta over [startDate, endDate).
-                    metric: Int(sample.quantity.doubleValue(for: .count()).rounded()),
-                    source: NocturneStepCountSource.delta,
-                    device: sample.device?.name,
-                    app: sample.sourceRevision.source.name,
-                    dataSource: "AppleHealth",
-                    syncIdentifier: sample.uuid.uuidString
-                )
-            }
-
-            for batch in uploads.chunked(into: maxRecordsPerUpload) {
-                try await api.uploadStepCounts(batch)
-            }
+            try await uploadStepCountSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.stepCountType)
         } catch {
             warning(.nocturne, "Failed to sync step count to Nocturne", error: error)
@@ -260,16 +242,93 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         do {
             let (samples, newAnchor): ([HKCategorySample], HKQueryAnchor?) =
                 try await fetchNewSamples(type: AppleHealth.sleepAnalysisType)
-            guard samples.isNotEmpty else { return }
-
-            let sessions = NocturneSleepSessionMapper.makeSessions(from: samples)
-            if sessions.isNotEmpty {
-                try await api.createSleepSessionsBulk(sessions)
-            }
+            try await uploadSleepSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.sleepAnalysisType)
         } catch {
             warning(.nocturne, "Failed to sync sleep sessions to Nocturne", error: error)
         }
+    }
+
+    // MARK: - Backfill
+
+    /// Uploads the last 24 hours of every enabled metric, independent of the sync anchors.
+    /// Unlike the anchored sync, a sample already picked up by the incremental sync (or a
+    /// previous backfill) is uploaded again here — `syncIdentifier`/`originalId` make that an
+    /// idempotent upsert server-side rather than a duplicate.
+    func backfillHealthData() async throws {
+        guard reachabilityManager.isReachable, let api = nocturneAPI else {
+            throw NocturneManagerError.notConfigured
+        }
+
+        let since = Date().addingTimeInterval(-backfillWindow)
+
+        if settingsManager.settings.nocturneSyncHeartRate {
+            let samples: [HKQuantitySample] = try await fetchSamples(type: AppleHealth.heartRateType, since: since)
+            try await uploadHeartRateSamples(samples, api: api)
+        }
+        if settingsManager.settings.nocturneSyncSteps {
+            let samples: [HKQuantitySample] = try await fetchSamples(type: AppleHealth.stepCountType, since: since)
+            try await uploadStepCountSamples(samples, api: api)
+        }
+        if settingsManager.settings.nocturneSyncSleep {
+            let samples: [HKCategorySample] = try await fetchSamples(type: AppleHealth.sleepAnalysisType, since: since)
+            try await uploadSleepSamples(samples, api: api)
+        }
+    }
+
+    // MARK: - Sample -> upload mapping
+
+    private func uploadHeartRateSamples(_ samples: [HKQuantitySample], api: NocturneAPI) async throws {
+        guard samples.isNotEmpty else { return }
+
+        let bpmUnit = HKUnit.count().unitDivided(by: .minute())
+        let uploads = samples.map { sample in
+            NocturneHeartRateUpload(
+                timestamp: sample.startDate,
+                utcOffset: utcOffsetMinutes(at: sample.startDate),
+                bpm: Int(sample.quantity.doubleValue(for: bpmUnit).rounded()),
+                accuracy: 0,
+                device: sample.device?.name,
+                app: sample.sourceRevision.source.name,
+                dataSource: "AppleHealth",
+                syncIdentifier: sample.uuid.uuidString
+            )
+        }
+
+        for batch in uploads.chunked(into: maxRecordsPerUpload) {
+            try await api.uploadHeartRates(batch)
+        }
+    }
+
+    private func uploadStepCountSamples(_ samples: [HKQuantitySample], api: NocturneAPI) async throws {
+        guard samples.isNotEmpty else { return }
+
+        let uploads = samples.map { sample in
+            NocturneStepCountUpload(
+                timestamp: sample.startDate,
+                utcOffset: utcOffsetMinutes(at: sample.startDate),
+                // A HealthKit step-count sample is a delta over [startDate, endDate).
+                metric: Int(sample.quantity.doubleValue(for: .count()).rounded()),
+                source: NocturneStepCountSource.delta,
+                device: sample.device?.name,
+                app: sample.sourceRevision.source.name,
+                dataSource: "AppleHealth",
+                syncIdentifier: sample.uuid.uuidString
+            )
+        }
+
+        for batch in uploads.chunked(into: maxRecordsPerUpload) {
+            try await api.uploadStepCounts(batch)
+        }
+    }
+
+    private func uploadSleepSamples(_ samples: [HKCategorySample], api: NocturneAPI) async throws {
+        guard samples.isNotEmpty else { return }
+
+        let sessions = NocturneSleepSessionMapper.makeSessions(from: samples)
+        guard sessions.isNotEmpty else { return }
+
+        try await api.createSleepSessionsBulk(sessions)
     }
 
     private func utcOffsetMinutes(at date: Date) -> Int {
@@ -292,6 +351,29 @@ final class BaseNocturneManager: NocturneManager, Injectable {
                     return
                 }
                 continuation.resume(returning: ((samplesOrNil as? [T]) ?? [], newAnchor))
+            }
+            healthKitStore.execute(query)
+        }
+    }
+
+    /// Plain (non-anchored) fetch of every sample of `type` since `since`, used by
+    /// ``backfillHealthData()``. Unlike ``fetchNewSamples(type:)`` this doesn't consume or
+    /// advance the sync anchor, so it can freely re-fetch a window the anchored sync already
+    /// covered.
+    private func fetchSamples<T: HKSample>(type: HKSampleType, since: Date) async throws -> [T] {
+        let predicate = HKQuery.predicateForSamples(withStart: since, end: nil, options: .strictStartDate)
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)]
+            ) { _, samplesOrNil, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                continuation.resume(returning: (samplesOrNil as? [T]) ?? [])
             }
             healthKitStore.execute(query)
         }

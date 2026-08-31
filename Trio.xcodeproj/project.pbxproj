@@ -768,6 +768,14 @@
 		BD175EBE000010000000000B /* HistoryRootView+Filters.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD175EFE000010000000000B /* HistoryRootView+Filters.swift */; };
 		BD175EBE000010000000000C /* HistoryRootView+AddGlucose.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD175EFE000010000000000C /* HistoryRootView+AddGlucose.swift */; };
 		BD175EBE000010000000000D /* HistoryRootView+Confirmations.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD175EFE000010000000000D /* HistoryRootView+Confirmations.swift */; };
+		E7E86B577B08424280F0C37C /* NocturneAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9102746F433BAB2771F062 /* NocturneAPI.swift */; };
+		162677D5B103F31ADB57FB33 /* NocturneModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E09F45B011ACF35ED6C37E54 /* NocturneModels.swift */; };
+		BDE6C298E8926C104491AF9D /* NocturneManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45FE1A789E6AB83E49B1C5D5 /* NocturneManager.swift */; };
+		D07F37123984336D51B3BFB4 /* NocturneSleepMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51010F2CB02C4387411970B /* NocturneSleepMapper.swift */; };
+		CCA850466B7F8E9EB2226759 /* NocturneConfigDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9AF02CD052CCB54FD19091 /* NocturneConfigDataFlow.swift */; };
+		98117510F6933FE55391720C /* NocturneConfigProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C969C7A66E20EC614C95A943 /* NocturneConfigProvider.swift */; };
+		6372D49AF38F1022BFE13403 /* NocturneConfigStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12993DF1BC777C73F073C877 /* NocturneConfigStateModel.swift */; };
+		7D8863AAB61211D9682042A7 /* NocturneConfigRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1720A909B80A4E6D90624DFA /* NocturneConfigRootView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1629,6 +1637,14 @@
 		BD175EFE000010000000000B /* HistoryRootView+Filters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HistoryRootView+Filters.swift"; sourceTree = "<group>"; };
 		BD175EFE000010000000000C /* HistoryRootView+AddGlucose.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HistoryRootView+AddGlucose.swift"; sourceTree = "<group>"; };
 		BD175EFE000010000000000D /* HistoryRootView+Confirmations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HistoryRootView+Confirmations.swift"; sourceTree = "<group>"; };
+		EC9102746F433BAB2771F062 /* NocturneAPI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneAPI.swift; sourceTree = "<group>"; };
+		E09F45B011ACF35ED6C37E54 /* NocturneModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneModels.swift; sourceTree = "<group>"; };
+		45FE1A789E6AB83E49B1C5D5 /* NocturneManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneManager.swift; sourceTree = "<group>"; };
+		E51010F2CB02C4387411970B /* NocturneSleepMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneSleepMapper.swift; sourceTree = "<group>"; };
+		EB9AF02CD052CCB54FD19091 /* NocturneConfigDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneConfigDataFlow.swift; sourceTree = "<group>"; };
+		C969C7A66E20EC614C95A943 /* NocturneConfigProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneConfigProvider.swift; sourceTree = "<group>"; };
+		12993DF1BC777C73F073C877 /* NocturneConfigStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneConfigStateModel.swift; sourceTree = "<group>"; };
+		1720A909B80A4E6D90624DFA /* NocturneConfigRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneConfigRootView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -1989,6 +2005,7 @@
 				5031FE61F63C2A8A8B7674DD /* ManualTempBasal */,
 				19D466A129AA2B0A004D5F33 /* MealSettings */,
 				D533BF261CDC1C3F871E7BFD /* NightscoutConfig */,
+				A1B2C3D4E5F60718293A4B5D /* NocturneConfig */,
 				BD47FD142D88AACC0043966B /* Onboarding */,
 				99C01B871ACAB3F32CE755C7 /* PumpConfig */,
 				DD9ECB6B2CA99FA400AA7C45 /* RemoteControlConfig */,
@@ -2185,6 +2202,7 @@
 				38192E03261B82FA0094D973 /* ReachabilityManager.swift */,
 				3811DE9625C9D88300A708ED /* HTTPResponseStatus.swift */,
 				DDC9B9962CFD2332003E7721 /* Nightscout */,
+				A1B2C3D4E5F60718293A4B5C /* Nocturne */,
 				38FE826925CC82DB001FF17A /* NetworkService.swift */,
 				CE1F6DDA2BAE08B60064EB8D /* TidepoolManager.swift */,
 			);
@@ -3946,6 +3964,36 @@
 			path = View;
 			sourceTree = "<group>";
 		};
+		A1B2C3D4E5F60718293A4B5C /* Nocturne */ = {
+			isa = PBXGroup;
+			children = (
+				EC9102746F433BAB2771F062 /* NocturneAPI.swift */,
+				E09F45B011ACF35ED6C37E54 /* NocturneModels.swift */,
+				45FE1A789E6AB83E49B1C5D5 /* NocturneManager.swift */,
+				E51010F2CB02C4387411970B /* NocturneSleepMapper.swift */,
+			);
+			path = Nocturne;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F60718293A4B5E /* View */ = {
+			isa = PBXGroup;
+			children = (
+				1720A909B80A4E6D90624DFA /* NocturneConfigRootView.swift */,
+			);
+			path = View;
+			sourceTree = "<group>";
+		};
+		A1B2C3D4E5F60718293A4B5D /* NocturneConfig */ = {
+			isa = PBXGroup;
+			children = (
+				EB9AF02CD052CCB54FD19091 /* NocturneConfigDataFlow.swift */,
+				C969C7A66E20EC614C95A943 /* NocturneConfigProvider.swift */,
+				12993DF1BC777C73F073C877 /* NocturneConfigStateModel.swift */,
+				A1B2C3D4E5F60718293A4B5E /* View */,
+			);
+			path = NocturneConfig;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -4311,6 +4359,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E7E86B577B08424280F0C37C /* NocturneAPI.swift in Sources */,
+				162677D5B103F31ADB57FB33 /* NocturneModels.swift in Sources */,
+				BDE6C298E8926C104491AF9D /* NocturneManager.swift in Sources */,
+				D07F37123984336D51B3BFB4 /* NocturneSleepMapper.swift in Sources */,
+				CCA850466B7F8E9EB2226759 /* NocturneConfigDataFlow.swift in Sources */,
+				98117510F6933FE55391720C /* NocturneConfigProvider.swift in Sources */,
+				6372D49AF38F1022BFE13403 /* NocturneConfigStateModel.swift in Sources */,
+				7D8863AAB61211D9682042A7 /* NocturneConfigRootView.swift in Sources */,
 				DDA40BBA2F4DB18800257798 /* AlgorithmGlucose.swift in Sources */,
 				DD5DC9F12CF3D97C00AB8703 /* AdjustmentsStateModel+Overrides.swift in Sources */,
 				3811DE2325C9D48300A708ED /* MainDataFlow.swift in Sources */,

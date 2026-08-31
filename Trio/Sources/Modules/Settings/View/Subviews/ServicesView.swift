@@ -26,6 +26,7 @@ struct ServicesView: BaseView {
                     Text("Tidepool").navigationLink(to: .tidepoolConfig, from: self)
                     if HKHealthStore.isHealthDataAvailable() {
                         Text("Apple Health").navigationLink(to: .healthkit, from: self)
+                        Text("Nocturne").navigationLink(to: .nocturneConfig, from: self)
                     }
                 }
             )

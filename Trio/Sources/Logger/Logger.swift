@@ -135,6 +135,7 @@ final class Logger {
     static let deviceManager = Logger(category: .deviceManager, reporter: baseReporter)
     static let apsManager = Logger(category: .apsManager, reporter: baseReporter)
     static let nightscout = Logger(category: .nightscout, reporter: baseReporter)
+    static let nocturne = Logger(category: .nocturne, reporter: baseReporter)
     static let remoteControl = Logger(category: .remoteControl, reporter: baseReporter)
     static let bolusState = Logger(category: .bolusState, reporter: baseReporter)
     static let watchManager = Logger(category: .watchManager, reporter: baseReporter)
@@ -150,6 +151,7 @@ final class Logger {
         case deviceManager
         case apsManager
         case nightscout
+        case nocturne
         case remoteControl
         case bolusState
         case watchManager
@@ -170,6 +172,7 @@ final class Logger {
             case .deviceManager: return .deviceManager
             case .apsManager: return .apsManager
             case .nightscout: return .nightscout
+            case .nocturne: return .nocturne
             case .remoteControl: return .remoteControl
             case .bolusState: return .bolusState
             case .watchManager: return .watchManager
@@ -189,6 +192,7 @@ final class Logger {
                  .coreData,
                  .deviceManager,
                  .nightscout,
+                 .nocturne,
                  .openAPS,
                  .remoteControl,
                  .service,

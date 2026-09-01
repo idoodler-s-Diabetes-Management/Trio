@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import HealthKit
 import Swinject
+import UIKit
 
 protocol NocturneManager: AnyObject {
     /// Whether a Nocturne URL + credential are stored and the Nocturne integration is enabled.
@@ -94,6 +95,20 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         injectServices(resolver)
         setupSyncPipelines()
         updateObservedMetrics()
+        observeProtectedDataAvailability()
+    }
+
+    /// HealthKit's database is inaccessible while the device is locked (`HKError.errorDatabaseInaccessible`,
+    /// code 6, "Protected health data is inaccessible") — exactly the state the phone is normally in when
+    /// background delivery fires. `sync(_:)` skips the query outright while locked rather than let it fail,
+    /// and this retries every enabled metric the moment the device unlocks, so a sync that's been skipping
+    /// all night catches up as soon as the phone is opened.
+    private func observeProtectedDataAvailability() {
+        Foundation.NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)
+            .sink { [weak self] _ in
+                self?.syncNow()
+            }
+            .store(in: &subscriptions)
     }
 
     // MARK: - Configuration
@@ -203,6 +218,11 @@ final class BaseNocturneManager: NocturneManager, Injectable {
     private func sync(_ metric: Metric) async {
         guard reachabilityManager.isReachable, let api = nocturneAPI else { return }
 
+        // Querying HealthKit while the device is locked reliably fails with
+        // HKError.errorDatabaseInaccessible. Skip quietly instead of logging a doomed attempt —
+        // observeProtectedDataAvailability() retries as soon as the device unlocks.
+        guard await UIApplication.shared.isProtectedDataAvailable else { return }
+
         switch metric {
         case .heartRate:
             guard settingsManager.settings.nocturneSyncHeartRate else { return }
@@ -223,6 +243,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
             try await uploadHeartRateSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.heartRateType)
             NocturneSyncStatus.markSynced(.heartRate)
+            debug(.nocturne, "Heart rate uploaded (\(samples.count) samples)")
         } catch {
             warning(.nocturne, "Failed to sync heart rate to Nocturne", error: error)
         }
@@ -235,6 +256,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
             try await uploadStepCountSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.stepCountType)
             NocturneSyncStatus.markSynced(.steps)
+            debug(.nocturne, "Step count uploaded (\(samples.count) samples)")
         } catch {
             warning(.nocturne, "Failed to sync step count to Nocturne", error: error)
         }
@@ -247,6 +269,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
             try await uploadSleepSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.sleepAnalysisType)
             NocturneSyncStatus.markSynced(.sleep)
+            debug(.nocturne, "Sleep sessions uploaded (\(samples.count) samples)")
         } catch {
             warning(.nocturne, "Failed to sync sleep sessions to Nocturne", error: error)
         }

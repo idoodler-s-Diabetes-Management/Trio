@@ -12,6 +12,19 @@ extension NocturneConfig {
         @Environment(\.colorScheme) var colorScheme
         @Environment(AppState.self) var appState
 
+        private var hasAnyPendingUnlock: Bool {
+            (state.syncHeartRate && state.isPendingUnlock(.heartRate)) ||
+                (state.syncSteps && state.isPendingUnlock(.steps)) ||
+                (state.syncSleep && state.isPendingUnlock(.sleep))
+        }
+
+        private var syncStatusFooter: Text? {
+            guard state.useNocturne, hasAnyPendingUnlock else { return nil }
+            return Text(
+                "Apple restricts background access to Health data while your iPhone is locked. Trio retries automatically the moment you unlock it — no action needed."
+            )
+        }
+
         private var backfillStatusCaption: String {
             var parts: [String] = []
             if state.syncHeartRate {
@@ -106,16 +119,19 @@ extension NocturneConfig {
                 }.listRowBackground(Color.chart)
 
                 if state.isConnected, state.useNocturne || state.uploadNightscoutData {
-                    Section(header: Text("Sync Status")) {
+                    Section(
+                        header: Text("Sync Status"),
+                        footer: syncStatusFooter
+                    ) {
                         if state.useNocturne {
                             if state.syncHeartRate {
-                                KeyValueRow(key: String(localized: "Heart Rate"), value: state.lastSyncedText(.heartRate))
+                                NocturneHealthMetricStatusRow(key: String(localized: "Heart Rate"), state: state, metric: .heartRate)
                             }
                             if state.syncSteps {
-                                KeyValueRow(key: String(localized: "Steps"), value: state.lastSyncedText(.steps))
+                                NocturneHealthMetricStatusRow(key: String(localized: "Steps"), state: state, metric: .steps)
                             }
                             if state.syncSleep {
-                                KeyValueRow(key: String(localized: "Sleep"), value: state.lastSyncedText(.sleep))
+                                NocturneHealthMetricStatusRow(key: String(localized: "Sleep"), state: state, metric: .sleep)
                             }
                         }
                         if state.uploadNightscoutData {
@@ -206,6 +222,30 @@ extension NocturneConfig {
             .navigationBarTitleDisplayMode(.automatic)
             .scrollContentBackground(.hidden).background(appState.trioBackgroundColor(for: colorScheme))
             .onAppear(perform: configureView)
+        }
+    }
+}
+
+/// A `KeyValueRow` for a HealthKit-sourced metric that also flags when its sync is pending
+/// because the device was locked, instead of just quietly showing a stale timestamp.
+private struct NocturneHealthMetricStatusRow: View {
+    let key: String
+    @ObservedObject var state: NocturneConfig.StateModel
+    let metric: NocturneSyncMetric
+
+    var body: some View {
+        HStack {
+            Text(key)
+                .foregroundColor(.primary)
+            if state.isPendingUnlock(metric) {
+                Image(systemName: "lock.fill")
+                    .foregroundColor(.orange)
+                    .font(.caption2)
+            }
+            Spacer()
+            Text(state.isPendingUnlock(metric) ? String(localized: "Waiting for unlock") : state.lastSyncedText(metric))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.trailing)
         }
     }
 }

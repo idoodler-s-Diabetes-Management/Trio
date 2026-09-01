@@ -46,6 +46,10 @@ enum NocturneSyncStatus {
         "NocturneSyncStatus.lastBackfilled.\(metric.rawValue)"
     }
 
+    private static func skippedLockedKey(_ metric: NocturneSyncMetric) -> String {
+        "NocturneSyncStatus.lastSkippedLocked.\(metric.rawValue)"
+    }
+
     static func markSynced(_ metric: NocturneSyncMetric, at date: Date = Date()) {
         UserDefaults.standard.set(date, forKey: syncedKey(metric))
     }
@@ -60,5 +64,25 @@ enum NocturneSyncStatus {
 
     static func lastBackfilled(_ metric: NocturneSyncMetric) -> Date? {
         UserDefaults.standard.object(forKey: backfilledKey(metric)) as? Date
+    }
+
+    /// Records that a sync attempt for `metric` was skipped because Apple Health's database was
+    /// inaccessible (the device was locked). Purely informational — surfaced on the Nocturne
+    /// settings screen so a quiet night doesn't read as "broken" to the user.
+    static func markSkippedLocked(_ metric: NocturneSyncMetric, at date: Date = Date()) {
+        UserDefaults.standard.set(date, forKey: skippedLockedKey(metric))
+    }
+
+    static func lastSkippedLocked(_ metric: NocturneSyncMetric) -> Date? {
+        UserDefaults.standard.object(forKey: skippedLockedKey(metric)) as? Date
+    }
+
+    /// Whether `metric` currently has a locked-device skip more recent than its last successful
+    /// sync — i.e., syncing is genuinely pending on the device being unlocked, not just something
+    /// that happened once in the past and has since caught up.
+    static func isPendingUnlock(_ metric: NocturneSyncMetric) -> Bool {
+        guard let skipped = lastSkippedLocked(metric) else { return false }
+        guard let synced = lastSynced(metric) else { return true }
+        return skipped > synced
     }
 }

@@ -78,6 +78,20 @@ extension NocturneConfig {
             return Self.agoText(NocturneSyncStatus.lastBackfilled(metric))
         }
 
+        /// Whether `metric` (a HealthKit-sourced metric) has data waiting to sync because Apple
+        /// Health was locked the last time Trio tried — not merely "this happened once," but
+        /// genuinely still pending as of the last attempt.
+        func isPendingUnlock(_ metric: NocturneSyncMetric) -> Bool {
+            _ = statusTick
+            return NocturneSyncStatus.isPendingUnlock(metric)
+        }
+
+        /// "X ago" for when `metric` last had a sync skipped because the device was locked.
+        func lastSkippedLockedText(_ metric: NocturneSyncMetric) -> String {
+            _ = statusTick
+            return Self.agoText(NocturneSyncStatus.lastSkippedLocked(metric))
+        }
+
         private static func agoText(_ date: Date?) -> String {
             guard let date else {
                 return String(localized: "Never")

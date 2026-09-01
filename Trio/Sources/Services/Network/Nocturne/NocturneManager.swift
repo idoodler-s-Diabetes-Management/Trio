@@ -57,6 +57,14 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         case heartRate
         case stepCount
         case sleep
+
+        var syncMetric: NocturneSyncMetric {
+            switch self {
+            case .heartRate: return .heartRate
+            case .stepCount: return .steps
+            case .sleep: return .sleep
+            }
+        }
     }
 
     private enum AppleHealth {
@@ -219,9 +227,13 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         guard reachabilityManager.isReachable, let api = nocturneAPI else { return }
 
         // Querying HealthKit while the device is locked reliably fails with
-        // HKError.errorDatabaseInaccessible. Skip quietly instead of logging a doomed attempt —
-        // observeProtectedDataAvailability() retries as soon as the device unlocks.
-        guard await UIApplication.shared.isProtectedDataAvailable else { return }
+        // HKError.errorDatabaseInaccessible. Skip quietly instead of attempting a doomed query —
+        // observeProtectedDataAvailability() retries as soon as the device unlocks. Recorded so
+        // the settings screen can tell the user why a sync is pending instead of looking broken.
+        guard await UIApplication.shared.isProtectedDataAvailable else {
+            NocturneSyncStatus.markSkippedLocked(metric.syncMetric)
+            return
+        }
 
         switch metric {
         case .heartRate:

@@ -777,6 +777,7 @@
 		6372D49AF38F1022BFE13403 /* NocturneConfigStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12993DF1BC777C73F073C877 /* NocturneConfigStateModel.swift */; };
 		7D8863AAB61211D9682042A7 /* NocturneConfigRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1720A909B80A4E6D90624DFA /* NocturneConfigRootView.swift */; };
 		47F0700DB567C9C3EF995E47 /* NocturneSyncStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EC49DB1BCD355F86A51C5E5 /* NocturneSyncStatus.swift */; };
+		FF5F6E86159F9DA27CD45664 /* NocturneV4Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6757BAD32192C06DA8A67851 /* NocturneV4Models.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1647,6 +1648,7 @@
 		12993DF1BC777C73F073C877 /* NocturneConfigStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneConfigStateModel.swift; sourceTree = "<group>"; };
 		1720A909B80A4E6D90624DFA /* NocturneConfigRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneConfigRootView.swift; sourceTree = "<group>"; };
 		3EC49DB1BCD355F86A51C5E5 /* NocturneSyncStatus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneSyncStatus.swift; sourceTree = "<group>"; };
+		6757BAD32192C06DA8A67851 /* NocturneV4Models.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NocturneV4Models.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -3974,6 +3976,7 @@
 				45FE1A789E6AB83E49B1C5D5 /* NocturneManager.swift */,
 				E51010F2CB02C4387411970B /* NocturneSleepMapper.swift */,
 				3EC49DB1BCD355F86A51C5E5 /* NocturneSyncStatus.swift */,
+				6757BAD32192C06DA8A67851 /* NocturneV4Models.swift */,
 			);
 			path = Nocturne;
 			sourceTree = "<group>";
@@ -4363,6 +4366,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				47F0700DB567C9C3EF995E47 /* NocturneSyncStatus.swift in Sources */,
+				FF5F6E86159F9DA27CD45664 /* NocturneV4Models.swift in Sources */,
 				E7E86B577B08424280F0C37C /* NocturneAPI.swift in Sources */,
 				162677D5B103F31ADB57FB33 /* NocturneModels.swift in Sources */,
 				BDE6C298E8926C104491AF9D /* NocturneManager.swift in Sources */,

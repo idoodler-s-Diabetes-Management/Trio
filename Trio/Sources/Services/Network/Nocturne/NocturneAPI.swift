@@ -30,6 +30,13 @@ final class NocturneAPI {
         static let heartRatePath = "/api/v4/HeartRate"
         static let stepCountPath = "/api/v4/StepCount"
         static let sleepSessionsPath = "/api/v4/sleep/sessions"
+        static let sensorGlucoseBulkPath = "/api/v4/glucose/sensor/bulk"
+        static let carbIntakeBulkPath = "/api/v4/nutrition/carbs/bulk"
+        static let bolusBulkPath = "/api/v4/insulin/boluses/bulk"
+        static let tempBasalPath = "/api/v4/insulin/temp-basals"
+        static let apsSnapshotPath = "/api/v4/device-status/aps"
+        static let pumpSnapshotPath = "/api/v4/device-status/pump"
+        static let uploaderSnapshotPath = "/api/v4/device-status/uploader"
         static let timeout: TimeInterval = 60
         /// Matches the server's `SleepController.CreateSessionsBulk` cap.
         static let maxSleepSessionsPerBulkRequest = 100
@@ -151,6 +158,65 @@ extension NocturneAPI {
     func uploadProfile(_ profile: NightscoutProfileStore) async throws {
         let request = try makeRequest(path: Config.profilePath, method: "POST")
         _ = try await send(request, body: profile)
+    }
+}
+
+// MARK: - Native V4 uploads (glucose, treatments, device status)
+//
+// Nocturne exposes these alongside the v1-compatible endpoints above; several — temp basals,
+// pump/uploader snapshots — are documented server-side as built specifically for native
+// uploaders "e.g. Trio". They save the server a legacy-treatment decompose step and, for carbs,
+// avoid the synthetic FPU fake-carb series the v1 path needs.
+
+extension NocturneAPI {
+    /// `POST /api/v4/glucose/sensor/bulk` (max 1000 per request; server caps further).
+    func uploadSensorGlucoseBulk(_ readings: [NocturneSensorGlucoseUpload]) async throws {
+        guard readings.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.sensorGlucoseBulkPath, method: "POST")
+        _ = try await send(request, body: readings)
+    }
+
+    /// `POST /api/v4/nutrition/carbs/bulk` (max 1000 per request).
+    func uploadCarbIntakesBulk(_ intakes: [NocturneCarbIntakeUpload]) async throws {
+        guard intakes.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.carbIntakeBulkPath, method: "POST")
+        _ = try await send(request, body: intakes)
+    }
+
+    /// `POST /api/v4/insulin/boluses/bulk` (max 1000 per request).
+    func uploadBolusesBulk(_ boluses: [NocturneBolusUpload]) async throws {
+        guard boluses.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.bolusBulkPath, method: "POST")
+        _ = try await send(request, body: boluses)
+    }
+
+    /// `POST /api/v4/insulin/temp-basals` — bulk by default; `isCancel` entries truncate the
+    /// active span instead of creating a new one (max 1000 per request).
+    func uploadTempBasals(_ tempBasals: [NocturneTempBasalUpload]) async throws {
+        guard tempBasals.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.tempBasalPath, method: "POST")
+        _ = try await send(request, body: tempBasals)
+    }
+
+    /// `POST /api/v4/device-status/aps` (max 1000 per request).
+    func uploadApsSnapshots(_ snapshots: [NocturneApsSnapshotUpload]) async throws {
+        guard snapshots.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.apsSnapshotPath, method: "POST")
+        _ = try await send(request, body: snapshots)
+    }
+
+    /// `POST /api/v4/device-status/pump` (max 1000 per request).
+    func uploadPumpSnapshots(_ snapshots: [NocturnePumpSnapshotUpload]) async throws {
+        guard snapshots.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.pumpSnapshotPath, method: "POST")
+        _ = try await send(request, body: snapshots)
+    }
+
+    /// `POST /api/v4/device-status/uploader` (max 1000 per request).
+    func uploadUploaderSnapshots(_ snapshots: [NocturneUploaderSnapshotUpload]) async throws {
+        guard snapshots.isNotEmpty else { return }
+        let request = try makeRequest(path: Config.uploaderSnapshotPath, method: "POST")
+        _ = try await send(request, body: snapshots)
     }
 }
 

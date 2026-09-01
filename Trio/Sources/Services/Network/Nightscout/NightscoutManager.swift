@@ -591,12 +591,72 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
 
         if let nocturne = nocturneAPI {
             do {
-                try await nocturne.uploadDeviceStatus(status)
+                // Native V4 snapshots instead of the legacy combined devicestatus.json: the
+                // server would decompose that payload into exactly these three record types
+                // anyway, sharing one correlationId — this just skips that step.
+                let now = Date()
+                let correlationId = UUID().uuidString
+                let syncIdentifier = "\(Int(now.timeIntervalSince1970))"
+                let primary = suggestedToUpload ?? openapsStatus.enacted
+                let iobEntry = openapsStatus.iob
+
+                let apsSnapshot = NocturneApsSnapshotUpload(
+                    timestamp: primary?.deliverAt ?? now,
+                    utcOffset: TimeZone.current.secondsFromGMT() / 60,
+                    app: NightscoutTreatment.local,
+                    dataSource: NightscoutTreatment.local,
+                    syncIdentifier: syncIdentifier,
+                    correlationId: correlationId,
+                    aidAlgorithm: .trio,
+                    aidVersion: Bundle.main.releaseVersionNumber,
+                    iob: (primary?.iob ?? iobEntry?.iob).map { Double(truncating: $0 as NSNumber) },
+                    cob: primary?.cob.map { Double(truncating: $0 as NSNumber) },
+                    currentBg: primary?.bg.map { Double(truncating: $0 as NSNumber) },
+                    eventualBg: primary?.eventualBG.map(Double.init),
+                    targetBg: primary?.current_target.map { Double(truncating: $0 as NSNumber) },
+                    recommendedBolus: Double(truncating: recommendedBolus as NSNumber),
+                    sensitivityRatio: primary?.sensitivityRatio.map { Double(truncating: $0 as NSNumber) },
+                    enacted: openapsStatus.enacted != nil,
+                    enactedRate: openapsStatus.enacted?.rate.map { Double(truncating: $0 as NSNumber) },
+                    enactedDuration: openapsStatus.enacted?.duration.map { Int(truncating: $0 as NSNumber) }
+                )
+                try await nocturne.uploadApsSnapshots([apsSnapshot])
+
+                let pumpSnapshot = NocturnePumpSnapshotUpload(
+                    timestamp: now,
+                    utcOffset: TimeZone.current.secondsFromGMT() / 60,
+                    app: NightscoutTreatment.local,
+                    dataSource: NightscoutTreatment.local,
+                    syncIdentifier: syncIdentifier,
+                    correlationId: correlationId,
+                    reservoir: pump.reservoir.map { Double(truncating: $0 as NSNumber) },
+                    batteryPercent: battery.percent,
+                    batteryVoltage: battery.voltage.map { Double(truncating: $0 as NSNumber) },
+                    bolusing: pumpStatus?.bolusing,
+                    suspended: pumpStatus?.suspended,
+                    pumpStatus: pumpStatus?.status.rawValue,
+                    clock: Formatter.iso8601withFractionalSeconds.string(from: now)
+                )
+                try await nocturne.uploadPumpSnapshots([pumpSnapshot])
+
+                let uploaderSnapshot = NocturneUploaderSnapshotUpload(
+                    timestamp: now,
+                    utcOffset: TimeZone.current.secondsFromGMT() / 60,
+                    app: NightscoutTreatment.local,
+                    dataSource: NightscoutTreatment.local,
+                    syncIdentifier: syncIdentifier,
+                    correlationId: correlationId,
+                    battery: uploader.battery,
+                    isCharging: uploader.isCharging,
+                    type: "phone"
+                )
+                try await nocturne.uploadUploaderSnapshots([uploaderSnapshot])
+
                 uploaded = true
                 NocturneSyncStatus.markSynced(.deviceStatus)
                 debug(.nocturne, "Device status with determination uploaded")
             } catch {
-                debug(.nocturne, String(describing: error))
+                debug(.nocturne, "Upload of device status failed: \(error)")
             }
         }
 
@@ -847,7 +907,7 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     func uploadCarbs() async {
         do {
             try await uploadCarbs(carbsStorage.getCarbsNotYetUploadedToNightscout())
-            try await uploadCarbs(carbsStorage.getFPUsNotYetUploadedToNightscout())
+            try await uploadCarbs(carbsStorage.getFPUsNotYetUploadedToNightscout(), isFPU: true)
         } catch {
             debug(
                 .nightscout,
@@ -905,8 +965,9 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
 
         if let nocturne = nocturneAPI {
             do {
-                for chunk in glucose.chunks(ofCount: 100) {
-                    try await nocturne.uploadGlucose(Array(chunk))
+                let readings = glucose.compactMap(makeNocturneSensorGlucoseUpload)
+                for chunk in readings.chunks(ofCount: 500) {
+                    try await nocturne.uploadSensorGlucoseBulk(Array(chunk))
                 }
                 uploaded = true
                 NocturneSyncStatus.markSynced(.glucose)
@@ -921,6 +982,24 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
         if uploaded {
             await updateGlucoseAsUploaded(glucose)
         }
+    }
+
+    /// Maps a Trio glucose reading onto Nocturne's native `/api/v4/glucose/sensor` shape.
+    /// Returns `nil` when there's no usable glucose value to send.
+    private func makeNocturneSensorGlucoseUpload(_ glucose: BloodGlucose) -> NocturneSensorGlucoseUpload? {
+        guard let mgdl = glucose.glucose ?? glucose.sgv else { return nil }
+
+        return NocturneSensorGlucoseUpload(
+            timestamp: glucose.dateString,
+            utcOffset: TimeZone.current.secondsFromGMT(for: glucose.dateString) / 60,
+            app: NightscoutTreatment.local,
+            dataSource: NightscoutTreatment.local,
+            mgdl: Double(mgdl),
+            direction: glucose.direction?.nocturneDirection,
+            noise: glucose.noise,
+            filtered: glucose.filtered.map { Double(truncating: $0 as NSNumber) },
+            unfiltered: glucose.unfiltered.map { Double(truncating: $0 as NSNumber) }
+        )
     }
 
     private func updateGlucoseAsUploaded(_ glucose: [BloodGlucose]) async {
@@ -998,20 +1077,90 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
 
         if let nocturne = nocturneAPI {
             do {
-                for chunk in treatments.chunks(ofCount: 100) {
-                    try await nocturne.uploadTreatments(Array(chunk))
-                }
+                try await mirrorPumpHistoryNative(treatments, api: nocturne)
                 uploaded = true
                 NocturneSyncStatus.markSynced(.treatments)
-                debug(.nocturne, "Treatments uploaded")
+                debug(.nocturne, "Pump history uploaded")
             } catch {
-                debug(.nocturne, String(describing: error))
+                debug(.nocturne, "Upload of pump history failed: \(error)")
             }
         }
 
         if uploaded {
             await updatePumpEventStoredsAsUploaded(treatments)
         }
+    }
+
+    private static let nocturneBolusEventTypes: Set<PumpEventStored.EventType> = [
+        .bolus, .smb, .isExternal, .mealBolus, .correctionBolus, .snackBolus, .bolusWizard
+    ]
+
+    private static let nocturneTempBasalEventTypes: Set<PumpEventStored.EventType> = [.nsTempBasal, .tempBasal]
+
+    /// Routes pump-history treatments to their native Nocturne endpoint by event type: boluses to
+    /// `/api/v4/insulin/boluses`, temp basals to `/api/v4/insulin/temp-basals`. Anything else
+    /// (pump suspend/resume, alarms, site changes, ...) falls back to the legacy treatments
+    /// endpoint so nothing is silently dropped.
+    private func mirrorPumpHistoryNative(_ treatments: [NightscoutTreatment], api: NocturneAPI) async throws {
+        let boluses = treatments.filter { Self.nocturneBolusEventTypes.contains($0.eventType) }
+        let tempBasals = treatments.filter { Self.nocturneTempBasalEventTypes.contains($0.eventType) }
+        let remainder = treatments.filter {
+            !Self.nocturneBolusEventTypes.contains($0.eventType) && !Self.nocturneTempBasalEventTypes.contains($0.eventType)
+        }
+
+        let bolusUploads = boluses.compactMap(makeNocturneBolusUpload)
+        for chunk in bolusUploads.chunks(ofCount: 500) {
+            try await api.uploadBolusesBulk(Array(chunk))
+        }
+
+        let tempBasalUploads = tempBasals.compactMap(makeNocturneTempBasalUpload)
+        for chunk in tempBasalUploads.chunks(ofCount: 500) {
+            try await api.uploadTempBasals(Array(chunk))
+        }
+
+        for chunk in remainder.chunks(ofCount: 100) {
+            try await api.uploadTreatments(Array(chunk))
+        }
+    }
+
+    /// Maps a bolus pump-history treatment onto Nocturne's native `/api/v4/insulin/boluses`
+    /// shape. Returns `nil` for entries with no positive insulin amount.
+    private func makeNocturneBolusUpload(_ treatment: NightscoutTreatment) -> NocturneBolusUpload? {
+        guard let insulin = treatment.insulin, insulin > 0, let createdAt = treatment.createdAt else { return nil }
+
+        let isAlgorithmDelivered = treatment.eventType == .smb
+        return NocturneBolusUpload(
+            timestamp: createdAt,
+            utcOffset: TimeZone.current.secondsFromGMT(for: createdAt) / 60,
+            app: NightscoutTreatment.local,
+            dataSource: NightscoutTreatment.local,
+            insulin: Double(truncating: insulin as NSNumber),
+            bolusType: .normal,
+            // Omit `kind` for a manual dose — the server defaults it to Manual when absent.
+            kind: isAlgorithmDelivered ? .algorithm : nil,
+            automatic: isAlgorithmDelivered,
+            syncIdentifier: treatment.id
+        )
+    }
+
+    /// Maps a temp-basal pump-history treatment onto Nocturne's native
+    /// `/api/v4/insulin/temp-basals` shape. Trio always uploads the resolved rate/duration
+    /// directly rather than a separate cancel marker, so `isCancel` is always `false` here.
+    /// Returns `nil` when there's no usable rate.
+    private func makeNocturneTempBasalUpload(_ treatment: NightscoutTreatment) -> NocturneTempBasalUpload? {
+        guard let rate = treatment.rate ?? treatment.absolute, let createdAt = treatment.createdAt else { return nil }
+
+        return NocturneTempBasalUpload(
+            timestamp: createdAt,
+            utcOffset: TimeZone.current.secondsFromGMT(for: createdAt) / 60,
+            app: NightscoutTreatment.local,
+            dataSource: NightscoutTreatment.local,
+            syncIdentifier: treatment.id,
+            rate: Double(truncating: rate as NSNumber),
+            durationMinutes: treatment.duration.map(Double.init),
+            origin: .algorithm,
+            isCancel: false
+        )
     }
 
     private func updatePumpEventStoredsAsUploaded(_ treatments: [NightscoutTreatment]) async {
@@ -1036,7 +1185,11 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
         }
     }
 
-    private func uploadCarbs(_ treatments: [NightscoutTreatment]) async {
+    /// - Parameter isFPU: `true` for the synthetic "fake carb" series Nightscout uses to model
+    ///   delayed fat/protein absorption. Nocturne doesn't need it — its native carb intake
+    ///   endpoint models that itself from `fatGrams`/`proteinGrams` on the real entry — so these
+    ///   never reach Nocturne, only Nightscout.
+    private func uploadCarbs(_ treatments: [NightscoutTreatment], isFPU: Bool = false) async {
         guard !treatments.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
             return
         }
@@ -1056,18 +1209,23 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
             } catch {
                 debug(.nightscout, String(describing: error))
             }
+        } else if isFPU {
+            // Nightscout isn't configured and Nocturne has no use for the FPU series either —
+            // nothing to do, but still let the flag progress so this isn't refetched forever.
+            uploaded = true
         }
 
-        if let nocturne = nocturneAPI {
+        if let nocturne = nocturneAPI, !isFPU {
             do {
-                for chunk in treatments.chunks(ofCount: 100) {
-                    try await nocturne.uploadTreatments(Array(chunk))
+                let intakes = treatments.compactMap(makeNocturneCarbIntakeUpload)
+                for chunk in intakes.chunks(ofCount: 500) {
+                    try await nocturne.uploadCarbIntakesBulk(Array(chunk))
                 }
                 uploaded = true
                 NocturneSyncStatus.markSynced(.treatments)
-                debug(.nocturne, "Treatments uploaded")
+                debug(.nocturne, "Carb intakes uploaded")
             } catch {
-                debug(.nocturne, String(describing: error))
+                debug(.nocturne, "Upload of carb intakes failed: \(error)")
             }
         }
 
@@ -1076,6 +1234,23 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
         if uploaded {
             await updateCarbsAsUploaded(treatments)
         }
+    }
+
+    /// Maps a real (non-FPU) carb treatment onto Nocturne's native `/api/v4/nutrition/carbs`
+    /// shape. Returns `nil` for entries with no positive carb amount.
+    private func makeNocturneCarbIntakeUpload(_ treatment: NightscoutTreatment) -> NocturneCarbIntakeUpload? {
+        guard let carbs = treatment.carbs, carbs > 0, let createdAt = treatment.createdAt else { return nil }
+
+        return NocturneCarbIntakeUpload(
+            timestamp: createdAt,
+            utcOffset: TimeZone.current.secondsFromGMT(for: createdAt) / 60,
+            app: NightscoutTreatment.local,
+            dataSource: NightscoutTreatment.local,
+            carbs: Double(truncating: carbs as NSNumber),
+            syncIdentifier: treatment.id,
+            fatGrams: (treatment.fat).flatMap { $0 > 0 ? Double(truncating: $0 as NSNumber) : nil },
+            proteinGrams: (treatment.protein).flatMap { $0 > 0 ? Double(truncating: $0 as NSNumber) : nil }
+        )
     }
 
     private func updateCarbsAsUploaded(_ treatments: [NightscoutTreatment]) async {

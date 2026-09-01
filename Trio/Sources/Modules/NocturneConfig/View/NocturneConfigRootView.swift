@@ -42,81 +42,25 @@ extension NocturneConfig {
         var body: some View {
             List {
                 Section(
-                    header: Text("Connect to Nocturne"),
+                    header: Text("Nocturne Integration"),
                     content: {
-                        HStack {
-                            TextField("URL", text: $state.url)
-                                .disableAutocorrection(true)
-                                .textContentType(.URL)
-                                .autocapitalization(.none)
-                                .keyboardType(.URL)
-                            if state.message.isNotEmpty, !state.isValidURL {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                        SecureField("API Secret or Token", text: $state.secret)
-                            .disableAutocorrection(true)
-                            .autocapitalization(.none)
-                            .textContentType(.password)
-                            .keyboardType(.asciiCapable)
-                        if state.message.isNotEmpty {
-                            Text(state.message)
-                        }
-                        if state.connecting {
+                        NavigationLink(destination: NocturneConnectView(state: state), label: {
                             HStack {
-                                Text("Connecting...")
-                                Spacer()
-                                ProgressView()
+                                Text("Connect")
+                                ZStack {
+                                    if state.isConnected {
+                                        Image(systemName: "network")
+                                        Image(systemName: "checkmark.circle.fill").foregroundColor(.green).font(.caption2)
+                                            .offset(x: 9, y: 6)
+                                    } else {
+                                        Image(systemName: "network.slash")
+                                    }
+                                }
                             }
-                        }
-
-                        if !state.isConnected {
-                            Button {
-                                state.connect()
-                            } label: {
-                                Text("Connect to Nocturne")
-                                    .font(.title3)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .buttonStyle(.bordered)
-                            .disabled(state.url.isEmpty || state.connecting)
-                        } else {
-                            Button(role: .destructive) {
-                                state.disconnect()
-                            } label: {
-                                Text("Disconnect and Remove")
-                                    .font(.title3)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .buttonStyle(.bordered)
-                            .tint(Color.loopRed)
-                        }
+                        })
+                        NavigationLink("Upload", destination: NocturneUploadView(state: state))
                     }
                 ).listRowBackground(Color.chart)
-
-                Section(
-                    header: Text("Health Data Sync"),
-                    footer: Text(
-                        "Trio reads these metrics from Apple Health and uploads them to Nocturne's Health API, which Nightscout has no equivalent for."
-                    )
-                ) {
-                    Toggle("Enable Nocturne Health Sync", isOn: $state.useNocturne)
-                    if state.useNocturne {
-                        Toggle("Heart Rate", isOn: $state.syncHeartRate)
-                        Toggle("Steps", isOn: $state.syncSteps)
-                        Toggle("Sleep", isOn: $state.syncSleep)
-                    }
-                }.listRowBackground(Color.chart)
-
-                Section(
-                    header: Text("Nightscout Data"),
-                    footer: Text(
-                        "Nocturne mirrors the Nightscout API, so Trio can send glucose, treatments, device status, and your therapy profile straight to Nocturne using the connection above — no separate Nightscout connection required. Leave this off if you'd rather keep using the Nightscout connection for that data (it works against a Nocturne URL too)."
-                    )
-                ) {
-                    Toggle("Upload Nightscout Data", isOn: $state.uploadNightscoutData)
-                }.listRowBackground(Color.chart)
 
                 if state.isConnected, state.useNocturne || state.uploadNightscoutData {
                     Section(

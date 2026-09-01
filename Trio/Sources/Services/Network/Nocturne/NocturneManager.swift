@@ -250,12 +250,12 @@ final class BaseNocturneManager: NocturneManager, Injectable {
 
     private func syncHeartRate(api: NocturneAPI) async {
         do {
-            let (samples, newAnchor): ([HKQuantitySample], HKQueryAnchor?) =
-                try await fetchNewSamples(type: AppleHealth.heartRateType)
-            try await uploadHeartRateSamples(samples, api: api)
-            saveAnchor(newAnchor, for: AppleHealth.heartRateType)
+            let uploaded = try await syncPaged(
+                type: AppleHealth.heartRateType,
+                upload: { (samples: [HKQuantitySample]) in try await self.uploadHeartRateSamples(samples, api: api) }
+            )
             NocturneSyncStatus.markSynced(.heartRate)
-            debug(.nocturne, "Heart rate uploaded (\(samples.count) samples)")
+            debug(.nocturne, "Heart rate uploaded (\(uploaded) samples)")
         } catch {
             warning(.nocturne, "Failed to sync heart rate to Nocturne", error: error)
         }
@@ -263,15 +263,48 @@ final class BaseNocturneManager: NocturneManager, Injectable {
 
     private func syncStepCount(api: NocturneAPI) async {
         do {
-            let (samples, newAnchor): ([HKQuantitySample], HKQueryAnchor?) =
-                try await fetchNewSamples(type: AppleHealth.stepCountType)
-            try await uploadStepCountSamples(samples, api: api)
-            saveAnchor(newAnchor, for: AppleHealth.stepCountType)
+            let uploaded = try await syncPaged(
+                type: AppleHealth.stepCountType,
+                upload: { (samples: [HKQuantitySample]) in try await self.uploadStepCountSamples(samples, api: api) }
+            )
             NocturneSyncStatus.markSynced(.steps)
-            debug(.nocturne, "Step count uploaded (\(samples.count) samples)")
+            debug(.nocturne, "Step count uploaded (\(uploaded) samples)")
         } catch {
             warning(.nocturne, "Failed to sync step count to Nocturne", error: error)
         }
+    }
+
+    /// Fetches and uploads new samples of `type` one HealthKit anchor-page at a time (page size
+    /// `maxRecordsPerUpload`), saving the anchor after each page succeeds rather than only once
+    /// the whole backlog is uploaded.
+    ///
+    /// Heart rate and step count can accumulate thousands of small delta samples between synced
+    /// devices; fetching them in one unbounded batch made the whole sync all-or-nothing — a single
+    /// dropped connection partway through a large backlog meant the anchor never advanced and the
+    /// next attempt had to resend everything (plus whatever had accumulated since), so a server
+    /// hiccup during a large backlog could permanently stall this metric. Paging makes each
+    /// successful page a durable checkpoint, so a later failure only has to retry from there.
+    private func syncPaged<T: HKSample>(
+        type: HKSampleType,
+        upload: (_ samples: [T]) async throws -> Void
+    ) async throws -> Int {
+        var totalUploaded = 0
+        while true {
+            let (samples, newAnchor): ([T], HKQueryAnchor?) = try await fetchNewSamples(
+                type: type,
+                limit: maxRecordsPerUpload
+            )
+            guard samples.isNotEmpty else { break }
+            try await upload(samples)
+            totalUploaded += samples.count
+            // A nil anchor here would mean no further progress can be checkpointed; stop rather
+            // than risk looping forever re-fetching the same page. Re-uploading is idempotent
+            // server-side (matched by `syncIdentifier`), so this can only cost efficiency, not data.
+            guard let newAnchor else { break }
+            saveAnchor(newAnchor, for: type)
+            if samples.count < maxRecordsPerUpload { break }
+        }
+        return totalUploaded
     }
 
     private func syncSleep(api: NocturneAPI) async {
@@ -378,14 +411,17 @@ final class BaseNocturneManager: NocturneManager, Injectable {
 
     // MARK: - Anchored delta sync
 
-    private func fetchNewSamples<T: HKSample>(type: HKSampleType) async throws -> (samples: [T], anchor: HKQueryAnchor?) {
+    private func fetchNewSamples<T: HKSample>(
+        type: HKSampleType,
+        limit: Int = HKObjectQueryNoLimit
+    ) async throws -> (samples: [T], anchor: HKQueryAnchor?) {
         let previousAnchor = loadAnchor(for: type)
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKAnchoredObjectQuery(
                 type: type,
                 predicate: nil,
                 anchor: previousAnchor,
-                limit: HKObjectQueryNoLimit
+                limit: limit
             ) { _, samplesOrNil, _, newAnchor, error in
                 if let error {
                     continuation.resume(throwing: error)

@@ -1,5 +1,6 @@
 import Combine
 import SwiftUI
+import UIKit
 
 extension NocturneConfig {
     final class StateModel: BaseStateModel<Provider> {
@@ -79,11 +80,15 @@ extension NocturneConfig {
         }
 
         /// Whether `metric` (a HealthKit-sourced metric) has data waiting to sync because Apple
-        /// Health was locked the last time Trio tried — not merely "this happened once," but
-        /// genuinely still pending as of the last attempt.
+        /// Health is *currently* locked — not merely "this happened at some point since the last
+        /// success." The UserDefaults-backed skip/synced bookkeeping alone can't tell a still-locked
+        /// device apart from one that's since unlocked and is now failing to sync for an unrelated
+        /// reason (a network or server error); checking the device's live lock state here keeps the
+        /// label from getting stuck on "Waiting for unlock" after the device is unlocked again.
         func isPendingUnlock(_ metric: NocturneSyncMetric) -> Bool {
             _ = statusTick
-            return NocturneSyncStatus.isPendingUnlock(metric)
+            guard NocturneSyncStatus.isPendingUnlock(metric) else { return false }
+            return !UIApplication.shared.isProtectedDataAvailable
         }
 
         /// "X ago" for when `metric` last had a sync skipped because the device was locked.

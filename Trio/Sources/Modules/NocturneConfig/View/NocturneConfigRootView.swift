@@ -12,6 +12,20 @@ extension NocturneConfig {
         @Environment(\.colorScheme) var colorScheme
         @Environment(AppState.self) var appState
 
+        private var backfillStatusCaption: String {
+            var parts: [String] = []
+            if state.syncHeartRate {
+                parts.append("\(String(localized: "Heart Rate")): \(state.lastBackfilledText(.heartRate))")
+            }
+            if state.syncSteps {
+                parts.append("\(String(localized: "Steps")): \(state.lastBackfilledText(.steps))")
+            }
+            if state.syncSleep {
+                parts.append("\(String(localized: "Sleep")): \(state.lastBackfilledText(.sleep))")
+            }
+            return parts.joined(separator: "  ·  ")
+        }
+
         var body: some View {
             List {
                 Section(
@@ -71,7 +85,7 @@ extension NocturneConfig {
                 Section(
                     header: Text("Health Data Sync"),
                     footer: Text(
-                        "Trio reads these metrics from Apple Health and uploads them to Nocturne's Health API. Nightscout-compatible data (glucose, treatments, device status) is sent through the separate Nightscout connection, which also works against a Nocturne server URL."
+                        "Trio reads these metrics from Apple Health and uploads them to Nocturne's Health API, which Nightscout has no equivalent for."
                     )
                 ) {
                     Toggle("Enable Nocturne Health Sync", isOn: $state.useNocturne)
@@ -81,6 +95,37 @@ extension NocturneConfig {
                         Toggle("Sleep", isOn: $state.syncSleep)
                     }
                 }.listRowBackground(Color.chart)
+
+                Section(
+                    header: Text("Nightscout Data"),
+                    footer: Text(
+                        "Nocturne mirrors the Nightscout API, so Trio can send glucose, treatments, device status, and your therapy profile straight to Nocturne using the connection above — no separate Nightscout connection required. Leave this off if you'd rather keep using the Nightscout connection for that data (it works against a Nocturne URL too)."
+                    )
+                ) {
+                    Toggle("Upload Nightscout Data", isOn: $state.uploadNightscoutData)
+                }.listRowBackground(Color.chart)
+
+                if state.isConnected, state.useNocturne || state.uploadNightscoutData {
+                    Section(header: Text("Sync Status")) {
+                        if state.useNocturne {
+                            if state.syncHeartRate {
+                                KeyValueRow(key: String(localized: "Heart Rate"), value: state.lastSyncedText(.heartRate))
+                            }
+                            if state.syncSteps {
+                                KeyValueRow(key: String(localized: "Steps"), value: state.lastSyncedText(.steps))
+                            }
+                            if state.syncSleep {
+                                KeyValueRow(key: String(localized: "Sleep"), value: state.lastSyncedText(.sleep))
+                            }
+                        }
+                        if state.uploadNightscoutData {
+                            KeyValueRow(key: String(localized: "Glucose"), value: state.lastSyncedText(.glucose))
+                            KeyValueRow(key: String(localized: "Treatments"), value: state.lastSyncedText(.treatments))
+                            KeyValueRow(key: String(localized: "Device Status"), value: state.lastSyncedText(.deviceStatus))
+                            KeyValueRow(key: String(localized: "Profile"), value: state.lastSyncedText(.profile))
+                        }
+                    }.listRowBackground(Color.chart)
+                }
 
                 if state.useNocturne, state.isConnected {
                     Section(
@@ -120,6 +165,12 @@ extension NocturneConfig {
                                         ProgressView()
                                     }
                                 }.padding(.top)
+
+                                Text(backfillStatusCaption)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.top, 2)
                             }.padding(.vertical)
                         }
                     ).listRowBackground(Color.chart)

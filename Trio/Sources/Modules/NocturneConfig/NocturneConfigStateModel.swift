@@ -18,7 +18,12 @@ extension NocturneConfig {
         @Published var syncHeartRate = true
         @Published var syncSteps = true
         @Published var syncSleep = true
+        @Published var uploadNightscoutData = false
         @Published var needsHealthKitPermission = false
+
+        /// Bumped every 30s purely to force the "X ago" sync-status labels to redraw; the
+        /// timestamps themselves live in ``NocturneSyncStatus`` (UserDefaults), not here.
+        @Published private var statusTick = Date()
 
         override func subscribe() {
             url = keychain.getValue(String.self, forKey: Config.urlKey) ?? ""
@@ -51,6 +56,34 @@ extension NocturneConfig {
             subscribeSetting(\.nocturneSyncSleep, on: $syncSleep) { syncSleep = $0 } didSet: { [weak self] _ in
                 self?.nocturneManager.updateObservedMetrics()
             }
+
+            subscribeSetting(\.nocturneUploadNightscoutData, on: $uploadNightscoutData) { uploadNightscoutData = $0 }
+
+            Timer.publish(every: 30, on: .main, in: .common)
+                .autoconnect()
+                .sink { [weak self] date in self?.statusTick = date }
+                .store(in: &lifetime)
+        }
+
+        /// "X ago" (or "Never") for the last successful sync of `metric`, re-evaluated whenever
+        /// `statusTick` changes so the screen stays roughly current while it's open.
+        func lastSyncedText(_ metric: NocturneSyncMetric) -> String {
+            _ = statusTick
+            return Self.agoText(NocturneSyncStatus.lastSynced(metric))
+        }
+
+        /// "X ago" (or "Never") for the last backfill of `metric`.
+        func lastBackfilledText(_ metric: NocturneSyncMetric) -> String {
+            _ = statusTick
+            return Self.agoText(NocturneSyncStatus.lastBackfilled(metric))
+        }
+
+        private static func agoText(_ date: Date?) -> String {
+            guard let date else {
+                return String(localized: "Never")
+            }
+            let ago = String(localized: "ago", comment: "Relative time suffix, e.g. '5 m ago'")
+            return "\(TimeAgoFormatter.minutesAgo(from: date)) \(ago)"
         }
 
         func connect() {

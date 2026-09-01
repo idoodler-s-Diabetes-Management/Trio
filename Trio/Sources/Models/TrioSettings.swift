@@ -49,6 +49,7 @@ struct TrioSettings: JSON, Equatable, Encodable {
     var nocturneSyncHeartRate: Bool = true
     var nocturneSyncSteps: Bool = true
     var nocturneSyncSleep: Bool = true
+    var nocturneUploadNightscoutData: Bool = false
     var smoothGlucose: Bool = false
     var eA1cDisplayUnit: EstimatedA1cDisplayUnit = .percent
     var high: Decimal = 180
@@ -195,6 +196,10 @@ extension TrioSettings: Decodable {
 
         if let nocturneSyncSleep = try? container.decode(Bool.self, forKey: .nocturneSyncSleep) {
             settings.nocturneSyncSleep = nocturneSyncSleep
+        }
+
+        if let nocturneUploadNightscoutData = try? container.decode(Bool.self, forKey: .nocturneUploadNightscoutData) {
+            settings.nocturneUploadNightscoutData = nocturneUploadNightscoutData
         }
 
         if let useFPUconversion = try? container.decode(Bool.self, forKey: .useFPUconversion) {

@@ -126,6 +126,26 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
         return NightscoutAPI(url: url, secret: secret)
     }
 
+    /// Whether Trio should also mirror this Nightscout-compatible upload to a configured Nocturne
+    /// server. Nocturne's v1 API matches Nightscout 1:1, so every payload built for
+    /// `nightscoutAPI` below is reused verbatim — this lets Nocturne fully replace Nightscout
+    /// (the Nightscout connection itself can be left unconfigured) or run alongside it.
+    private var isNocturneMirrorEnabled: Bool {
+        settingsManager.settings.nocturneUploadNightscoutData
+    }
+
+    private var nocturneAPI: NocturneAPI? {
+        guard isNocturneMirrorEnabled,
+              let urlString = keychain.getValue(String.self, forKey: NocturneConfig.Config.urlKey),
+              let url = URL(string: urlString),
+              let secret = keychain.getValue(String.self, forKey: NocturneConfig.Config.secretKey),
+              secret.isNotEmpty
+        else {
+            return nil
+        }
+        return NocturneAPI(url: url, secret: secret)
+    }
+
     private var lastEnactedDetermination: Determination?
     private var lastSuggestedDetermination: Determination?
 
@@ -405,8 +425,8 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     /// - Note: Ensure `nightscoutAPI` is initialized and `isUploadEnabled` is set to `true` before invoking this function.
     /// - Returns: Nothing.
     func uploadDeviceStatus() async throws {
-        guard let nightscout = nightscoutAPI, isUploadEnabled else {
-            debug(.nightscout, "NS API not available or upload disabled. Aborting NS Status upload.")
+        guard isUploadEnabled || isNocturneMirrorEnabled, nightscoutAPI != nil || nocturneAPI != nil else {
+            debug(.nightscout, "NS/Nocturne API not available or upload disabled. Aborting device status upload.")
             return
         }
 
@@ -557,10 +577,30 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
             uploader: uploader
         )
 
-        do {
-            try await nightscout.uploadDeviceStatus(status)
-            debug(.nightscout, "NSDeviceStatus with Determination uploaded")
+        var uploaded = false
 
+        if let nightscout = nightscoutAPI {
+            do {
+                try await nightscout.uploadDeviceStatus(status)
+                uploaded = true
+                debug(.nightscout, "NSDeviceStatus with Determination uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
+            }
+        }
+
+        if let nocturne = nocturneAPI {
+            do {
+                try await nocturne.uploadDeviceStatus(status)
+                uploaded = true
+                NocturneSyncStatus.markSynced(.deviceStatus)
+                debug(.nocturne, "Device status with determination uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
+            }
+        }
+
+        if uploaded {
             if let enacted = fetchedEnactedDetermination {
                 await updateOrefDeterminationAsUploaded([enacted])
                 debug(.nightscout, "Flagged last fetched enacted determination as uploaded")
@@ -578,8 +618,6 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
             if let lastSuggestedDetermination = fetchedSuggestedDetermination {
                 self.lastSuggestedDetermination = lastSuggestedDetermination
             }
-        } catch {
-            debug(.nightscout, String(describing: error))
         }
     }
 
@@ -606,7 +644,7 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     func uploadProfiles() async throws {
-        if isUploadEnabled {
+        if isUploadEnabled || isNocturneMirrorEnabled {
             do {
                 guard let sensitivities = await storage.retrieveAsync(
                     OpenAPS.Settings.insulinSensitivities,
@@ -723,25 +761,49 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
                     expirationDate: expireDate
                 )
 
-                guard let nightscout = nightscoutAPI, isNetworkReachable else {
+                let nightscout = nightscoutAPI
+                let nocturne = nocturneAPI
+
+                guard nightscout != nil || nocturne != nil, isNetworkReachable else {
                     if !isNetworkReachable {
                         debug(.nightscout, "Network issues; aborting upload")
                     }
-                    debug(.nightscout, "Nightscout API service not available; aborting upload")
+                    debug(.nightscout, "Nightscout/Nocturne API service not available; aborting upload")
                     return
                 }
 
-                try await nightscout.uploadProfile(profileStore)
+                var uploaded = false
 
-                BuildDetails.shared.recordUploadedExpireDate(expireDate: expireDate)
+                if let nightscout {
+                    do {
+                        try await nightscout.uploadProfile(profileStore)
+                        uploaded = true
+                        debug(.nightscout, "Profile uploaded")
+                    } catch {
+                        debug(.nightscout, "NightscoutManager uploadProfile: \(error)")
+                    }
+                }
 
-                debug(.nightscout, "Profile uploaded")
+                if let nocturne {
+                    do {
+                        try await nocturne.uploadProfile(profileStore)
+                        uploaded = true
+                        NocturneSyncStatus.markSynced(.profile)
+                        debug(.nocturne, "Profile uploaded")
+                    } catch {
+                        debug(.nocturne, "NightscoutManager uploadProfile (Nocturne): \(error)")
+                    }
+                }
+
+                if uploaded {
+                    BuildDetails.shared.recordUploadedExpireDate(expireDate: expireDate)
+                }
             } catch {
                 debug(.nightscout, "NightscoutManager uploadProfile: \(error)")
                 throw error
             }
         } else {
-            debug(.nightscout, "Upload to NS disabled; aborting profile uploaded")
+            debug(.nightscout, "Upload to NS/Nocturne disabled; aborting profile uploaded")
         }
     }
 
@@ -819,22 +881,45 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadGlucose(_ glucose: [BloodGlucose]) async {
-        guard !glucose.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled, isUploadGlucoseEnabled else {
+        guard !glucose.isEmpty, isUploadEnabled || isNocturneMirrorEnabled, isUploadGlucoseEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            // Upload in Batches of 100
-            for chunk in glucose.chunks(ofCount: 100) {
-                try await nightscout.uploadGlucose(Array(chunk))
+        var uploaded = false
+
+        if let nightscout = nightscoutAPI {
+            do {
+                // Upload in Batches of 100
+                for chunk in glucose.chunks(ofCount: 100) {
+                    try await nightscout.uploadGlucose(Array(chunk))
+                }
+                uploaded = true
+                debug(.nightscout, "Glucose uploaded")
+            } catch {
+                debug(.nightscout, "Upload of glucose failed: \(error)")
             }
+        }
 
-            // If successful, update the isUploadedToNS property of the GlucoseStored objects
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in glucose.chunks(ofCount: 100) {
+                    try await nocturne.uploadGlucose(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.glucose)
+                debug(.nocturne, "Glucose uploaded")
+            } catch {
+                debug(.nocturne, "Upload of glucose failed: \(error)")
+            }
+        }
+
+        // If either upload succeeded, update the isUploadedToNS property of the GlucoseStored
+        // objects. (Field name predates Nocturne; it now means "sent to an external service".)
+        if uploaded {
             await updateGlucoseAsUploaded(glucose)
-
-            debug(.nightscout, "Glucose uploaded")
-        } catch {
-            debug(.nightscout, "Upload of glucose failed: \(error)")
         }
     }
 
@@ -861,36 +946,71 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadNonCoreDataTreatments(_ treatments: [NightscoutTreatment]) async {
-        guard !treatments.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !treatments.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
             return
         }
 
-        do {
-            for chunk in treatments.chunks(ofCount: 100) {
-                try await nightscout.uploadTreatments(Array(chunk))
+        if let nightscout = nightscoutAPI {
+            do {
+                for chunk in treatments.chunks(ofCount: 100) {
+                    try await nightscout.uploadTreatments(Array(chunk))
+                }
+                debug(.nightscout, "Treatments uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
-            debug(.nightscout, "Treatments uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in treatments.chunks(ofCount: 100) {
+                    try await nocturne.uploadTreatments(Array(chunk))
+                }
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Treatments uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
+            }
         }
     }
 
     private func uploadPumpHistory(_ treatments: [NightscoutTreatment]) async {
-        guard !treatments.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !treatments.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            for chunk in treatments.chunks(ofCount: 100) {
-                try await nightscout.uploadTreatments(Array(chunk))
+        var uploaded = false
+
+        if let nightscout = nightscoutAPI {
+            do {
+                for chunk in treatments.chunks(ofCount: 100) {
+                    try await nightscout.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                debug(.nightscout, "Treatments uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in treatments.chunks(ofCount: 100) {
+                    try await nocturne.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Treatments uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
+            }
+        }
+
+        if uploaded {
             await updatePumpEventStoredsAsUploaded(treatments)
-
-            debug(.nightscout, "Treatments uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
         }
     }
 
@@ -917,21 +1037,44 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadCarbs(_ treatments: [NightscoutTreatment]) async {
-        guard !treatments.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !treatments.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            for chunk in treatments.chunks(ofCount: 100) {
-                try await nightscout.uploadTreatments(Array(chunk))
+        var uploaded = false
+
+        if let nightscout = nightscoutAPI {
+            do {
+                for chunk in treatments.chunks(ofCount: 100) {
+                    try await nightscout.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                debug(.nightscout, "Treatments uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
-            // If successful, update the isUploadedToNS property of the CarbEntryStored objects
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in treatments.chunks(ofCount: 100) {
+                    try await nocturne.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Treatments uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
+            }
+        }
+
+        // If either upload succeeded, update the isUploadedToNS property of the
+        // CarbEntryStored objects.
+        if uploaded {
             await updateCarbsAsUploaded(treatments)
-
-            debug(.nightscout, "Treatments uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
         }
     }
 
@@ -958,39 +1101,66 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadOverrides(_ overrides: [NightscoutExercise]) async {
-        guard !overrides.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !overrides.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            var processedOverrides: [NightscoutExercise] = []
+        var uploaded = false
+        // Falls back to the raw overrides if only Nocturne is configured — the filtering below
+        // (valid created_at) and the Nightscout-only re-render dedup only run against Nightscout.
+        var uploadedOverrides = overrides
 
-            for override in overrides {
-                guard let createdAtString = override.created_at as? String else {
-                    continue
+        if let nightscout = nightscoutAPI {
+            do {
+                var processedOverrides: [NightscoutExercise] = []
+
+                for override in overrides {
+                    guard let createdAtString = override.created_at as? String else {
+                        continue
+                    }
+
+                    /// Check for an existing stored override and delete if needed
+                    /// This is neccessary to delete original entry in NS when a running override gets customized with a new duration.
+                    try await overridesStorage.checkIfShouldDeleteNightscoutOverrideEntry(
+                        forCreatedAt: createdAtString,
+                        newDuration: override.duration,
+                        using: nightscout
+                    )
+
+                    processedOverrides.append(override)
                 }
 
-                /// Check for an existing stored override and delete if needed
-                /// This is neccessary to delete original entry in NS when a running override gets customized with a new duration.
-                try await overridesStorage.checkIfShouldDeleteNightscoutOverrideEntry(
-                    forCreatedAt: createdAtString,
-                    newDuration: override.duration,
-                    using: nightscout
-                )
+                for chunk in processedOverrides.chunks(ofCount: 100) {
+                    try await nightscout.uploadOverrides(Array(chunk))
+                }
 
-                processedOverrides.append(override)
+                uploadedOverrides = processedOverrides
+                uploaded = true
+                debug(.nightscout, "Overrides uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
-            for chunk in processedOverrides.chunks(ofCount: 100) {
-                try await nightscout.uploadOverrides(Array(chunk))
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in uploadedOverrides.chunks(ofCount: 100) {
+                    try await nocturne.uploadOverrides(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Overrides uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
             }
+        }
 
-            // If successful, update the isUploadedToNS property of the OverrideStored objects
-            await updateOverridesAsUploaded(processedOverrides)
-
-            debug(.nightscout, "Overrides uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
+        // If either upload succeeded, update the isUploadedToNS property of the OverrideStored objects
+        if uploaded {
+            await updateOverridesAsUploaded(uploadedOverrides)
         }
     }
 
@@ -1017,38 +1187,61 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadOverrideRuns(_ overrideRuns: [NightscoutExercise]) async {
-        guard !overrideRuns.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !overrideRuns.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            var processedOverrideRuns: [NightscoutExercise] = []
-            for overrideRun in overrideRuns {
-                guard let createdAtString = overrideRun.created_at as? String else {
-                    continue
+        var uploaded = false
+
+        if let nightscout = nightscoutAPI {
+            do {
+                var processedOverrideRuns: [NightscoutExercise] = []
+                for overrideRun in overrideRuns {
+                    guard let createdAtString = overrideRun.created_at as? String else {
+                        continue
+                    }
+
+                    /// Check for an existing stored override and delete if needed
+                    /// This is neccessary when a running override is cancelled, or replaced with a new override, before its duration is over.
+                    try await overridesStorage.checkIfShouldDeleteNightscoutOverrideEntry(
+                        forCreatedAt: createdAtString,
+                        newDuration: overrideRun.duration,
+                        using: nightscout
+                    )
+
+                    processedOverrideRuns.append(overrideRun)
                 }
 
-                /// Check for an existing stored override and delete if needed
-                /// This is neccessary when a running override is cancelled, or replaced with a new override, before its duration is over.
-                try await overridesStorage.checkIfShouldDeleteNightscoutOverrideEntry(
-                    forCreatedAt: createdAtString,
-                    newDuration: overrideRun.duration,
-                    using: nightscout
-                )
+                for chunk in processedOverrideRuns.chunks(ofCount: 100) {
+                    try await nightscout.uploadOverrides(Array(chunk))
+                }
 
-                processedOverrideRuns.append(overrideRun)
+                uploaded = true
+                debug(.nightscout, "Overrides uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
-            for chunk in processedOverrideRuns.chunks(ofCount: 100) {
-                try await nightscout.uploadOverrides(Array(chunk))
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in overrideRuns.chunks(ofCount: 100) {
+                    try await nocturne.uploadOverrides(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Overrides uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
             }
+        }
 
-            // If successful, update the isUploadedToNS property of the OverrideRunStored objects
+        // If either upload succeeded, update the isUploadedToNS property of the OverrideRunStored objects
+        if uploaded {
             await updateOverrideRunsAsUploaded(overrideRuns)
-
-            debug(.nightscout, "Overrides uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
         }
     }
 
@@ -1075,21 +1268,43 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadTempTargets(_ tempTargets: [NightscoutTreatment]) async {
-        guard !tempTargets.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !tempTargets.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            for chunk in tempTargets.chunks(ofCount: 100) {
-                try await nightscout.uploadTreatments(Array(chunk))
+        var uploaded = false
+
+        if let nightscout = nightscoutAPI {
+            do {
+                for chunk in tempTargets.chunks(ofCount: 100) {
+                    try await nightscout.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                debug(.nightscout, "Temp Targets uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
-            // If successful, update the isUploadedToNS property of the TempTargetStored objects
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in tempTargets.chunks(ofCount: 100) {
+                    try await nocturne.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Temp Targets uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
+            }
+        }
+
+        // If either upload succeeded, update the isUploadedToNS property of the TempTargetStored objects
+        if uploaded {
             await updateTempTargetsAsUploaded(tempTargets)
-
-            debug(.nightscout, "Temp Targets uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
         }
     }
 
@@ -1116,21 +1331,43 @@ final class BaseNightscoutManager: NightscoutManager, Injectable {
     }
 
     private func uploadTempTargetRuns(_ tempTargetRuns: [NightscoutTreatment]) async {
-        guard !tempTargetRuns.isEmpty, let nightscout = nightscoutAPI, isUploadEnabled else {
+        guard !tempTargetRuns.isEmpty, isUploadEnabled || isNocturneMirrorEnabled else {
+            return
+        }
+        guard nightscoutAPI != nil || nocturneAPI != nil else {
             return
         }
 
-        do {
-            for chunk in tempTargetRuns.chunks(ofCount: 100) {
-                try await nightscout.uploadTreatments(Array(chunk))
+        var uploaded = false
+
+        if let nightscout = nightscoutAPI {
+            do {
+                for chunk in tempTargetRuns.chunks(ofCount: 100) {
+                    try await nightscout.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                debug(.nightscout, "Temp Target Runs uploaded")
+            } catch {
+                debug(.nightscout, String(describing: error))
             }
+        }
 
-            // If successful, update the isUploadedToNS property of the TempTargetRunStored objects
+        if let nocturne = nocturneAPI {
+            do {
+                for chunk in tempTargetRuns.chunks(ofCount: 100) {
+                    try await nocturne.uploadTreatments(Array(chunk))
+                }
+                uploaded = true
+                NocturneSyncStatus.markSynced(.treatments)
+                debug(.nocturne, "Temp Target Runs uploaded")
+            } catch {
+                debug(.nocturne, String(describing: error))
+            }
+        }
+
+        // If either upload succeeded, update the isUploadedToNS property of the TempTargetRunStored objects
+        if uploaded {
             await updateTempTargetRunsAsUploaded(tempTargetRuns)
-
-            debug(.nightscout, "Temp Target Runs uploaded")
-        } catch {
-            debug(.nightscout, String(describing: error))
         }
     }
 

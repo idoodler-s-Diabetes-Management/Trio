@@ -222,6 +222,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
                 try await fetchNewSamples(type: AppleHealth.heartRateType)
             try await uploadHeartRateSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.heartRateType)
+            NocturneSyncStatus.markSynced(.heartRate)
         } catch {
             warning(.nocturne, "Failed to sync heart rate to Nocturne", error: error)
         }
@@ -233,6 +234,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
                 try await fetchNewSamples(type: AppleHealth.stepCountType)
             try await uploadStepCountSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.stepCountType)
+            NocturneSyncStatus.markSynced(.steps)
         } catch {
             warning(.nocturne, "Failed to sync step count to Nocturne", error: error)
         }
@@ -244,6 +246,7 @@ final class BaseNocturneManager: NocturneManager, Injectable {
                 try await fetchNewSamples(type: AppleHealth.sleepAnalysisType)
             try await uploadSleepSamples(samples, api: api)
             saveAnchor(newAnchor, for: AppleHealth.sleepAnalysisType)
+            NocturneSyncStatus.markSynced(.sleep)
         } catch {
             warning(.nocturne, "Failed to sync sleep sessions to Nocturne", error: error)
         }
@@ -265,14 +268,17 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         if settingsManager.settings.nocturneSyncHeartRate {
             let samples: [HKQuantitySample] = try await fetchSamples(type: AppleHealth.heartRateType, since: since)
             try await uploadHeartRateSamples(samples, api: api)
+            NocturneSyncStatus.markBackfilled(.heartRate)
         }
         if settingsManager.settings.nocturneSyncSteps {
             let samples: [HKQuantitySample] = try await fetchSamples(type: AppleHealth.stepCountType, since: since)
             try await uploadStepCountSamples(samples, api: api)
+            NocturneSyncStatus.markBackfilled(.steps)
         }
         if settingsManager.settings.nocturneSyncSleep {
             let samples: [HKCategorySample] = try await fetchSamples(type: AppleHealth.sleepAnalysisType, since: since)
             try await uploadSleepSamples(samples, api: api)
+            NocturneSyncStatus.markBackfilled(.sleep)
         }
     }
 

@@ -3,11 +3,14 @@ import Foundation
 
 /// Low-level HTTP client for the Nocturne API (https://getnocturne.dev).
 ///
-/// Nocturne mirrors the Nightscout v1 API 1:1, so Trio's existing Nightscout integration already
-/// covers glucose/treatment/device-status/profile uploads against a Nocturne server. What
-/// Nightscout has no equivalent for is Nocturne's v4 API, which is what this client wraps:
-/// per-user health metrics captured on the phone rather than produced by the loop itself —
-/// heart rate, step count, and sleep sessions, typically sourced from Apple Health.
+/// Nocturne mirrors the Nightscout v1 API 1:1 and additionally exposes a v4 API for data
+/// Nightscout has no equivalent for. This client covers both surfaces:
+/// - v1-compatible endpoints (glucose entries, treatments, device status, profile) — the same
+///   data Trio already sends to Nightscout, reusing the exact same Codable types, so Nocturne can
+///   fully stand in for a Nightscout connection.
+/// - v4 Health endpoints (HeartRate, StepCount, Sleep sessions) — per-user health metrics
+///   captured on the phone rather than produced by the loop itself, typically sourced from
+///   Apple Health, which Nightscout has no representation for at all.
 ///
 /// Authentication mirrors ``NightscoutAPI``: Nocturne accepts a Nightscout-compatible API
 /// secret (SHA-1 hashed, sent as `api-secret`) as well as a Nocturne direct grant token
@@ -20,6 +23,10 @@ final class NocturneAPI {
     }
 
     private enum Config {
+        static let entriesPath = "/api/v1/entries.json"
+        static let treatmentsPath = "/api/v1/treatments.json"
+        static let statusPath = "/api/v1/devicestatus.json"
+        static let profilePath = "/api/v1/profile.json"
         static let heartRatePath = "/api/v4/HeartRate"
         static let stepCountPath = "/api/v4/StepCount"
         static let sleepSessionsPath = "/api/v4/sleep/sessions"
@@ -107,6 +114,43 @@ extension NocturneAPI {
             queryItems: [URLQueryItem(name: "count", value: "1")]
         )
         _ = try await send(request)
+    }
+}
+
+// MARK: - Nightscout-compatible uploads (/api/v1/*)
+
+extension NocturneAPI {
+    /// Uploads glucose entries, identical to `NightscoutAPI.uploadGlucose(_:)`.
+    func uploadGlucose(_ glucose: [BloodGlucose]) async throws {
+        let request = try makeRequest(path: Config.entriesPath, method: "POST")
+        _ = try await send(request, body: glucose)
+    }
+
+    /// Uploads treatments (carbs, boluses, temp basals, temp targets), identical to
+    /// `NightscoutAPI.uploadTreatments(_:)`.
+    func uploadTreatments(_ treatments: [NightscoutTreatment]) async throws {
+        let request = try makeRequest(path: Config.treatmentsPath, method: "POST")
+        _ = try await send(request, body: treatments)
+    }
+
+    /// Uploads overrides, which Nightscout (and Nocturne) represent as treatments under a
+    /// different payload shape. Identical to `NightscoutAPI.uploadOverrides(_:)`.
+    func uploadOverrides(_ overrides: [NightscoutExercise]) async throws {
+        let request = try makeRequest(path: Config.treatmentsPath, method: "POST")
+        _ = try await send(request, body: overrides)
+    }
+
+    /// Uploads the OpenAPS/pump device status snapshot, identical to
+    /// `NightscoutAPI.uploadDeviceStatus(_:)`.
+    func uploadDeviceStatus(_ status: NightscoutStatus) async throws {
+        let request = try makeRequest(path: Config.statusPath, method: "POST")
+        _ = try await send(request, body: status)
+    }
+
+    /// Uploads the therapy settings profile, identical to `NightscoutAPI.uploadProfile(_:)`.
+    func uploadProfile(_ profile: NightscoutProfileStore) async throws {
+        let request = try makeRequest(path: Config.profilePath, method: "POST")
+        _ = try await send(request, body: profile)
     }
 }
 

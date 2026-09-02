@@ -226,6 +226,18 @@ final class BaseNocturneManager: NocturneManager, Injectable {
     private func sync(_ metric: Metric) async {
         guard reachabilityManager.isReachable, let api = nocturneAPI else { return }
 
+        // HealthKit's background-delivery callback (and the network upload chained off it) can
+        // easily outlast the few seconds iOS grants that callback by default. Every other
+        // background-triggered network path in Trio — the loop cycle FetchGlucoseManager and
+        // APSManager kick off, which is what actually uploads glucose/treatments/device status —
+        // wraps itself in a background task assertion for exactly this reason; this sync path
+        // never did, so iOS could suspend it mid-request. That reads here as a plain network
+        // timeout or dropped connection, not a crash, which is why it never stood out as a
+        // background-execution problem.
+        var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+        backgroundTaskID = startBackgroundTask(withName: "Nocturne Health Sync")
+        defer { endBackgroundTaskSafely(&backgroundTaskID, taskName: "Nocturne Health Sync") }
+
         // Querying HealthKit while the device is locked reliably fails with
         // HKError.errorDatabaseInaccessible. Skip quietly instead of attempting a doomed query —
         // observeProtectedDataAvailability() retries as soon as the device unlocks. Recorded so
@@ -330,6 +342,13 @@ final class BaseNocturneManager: NocturneManager, Injectable {
         guard reachabilityManager.isReachable, let api = nocturneAPI else {
             throw NocturneManagerError.notConfigured
         }
+
+        // Protects against the user backgrounding the app (or the screen locking) partway
+        // through what can be a multi-chunk upload of up to 24 hours of data — see the matching
+        // comment in `sync(_:)`.
+        var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+        backgroundTaskID = startBackgroundTask(withName: "Nocturne Health Backfill")
+        defer { endBackgroundTaskSafely(&backgroundTaskID, taskName: "Nocturne Health Backfill") }
 
         let since = Date().addingTimeInterval(-backfillWindow)
 
